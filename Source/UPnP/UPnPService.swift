@@ -141,7 +141,7 @@ public class UPnPService: Equatable, Identifiable, Hashable {
 //            Logger.swiftUPnP.debug("Service parsed with \(self.serviceDefinition?.actionList.action.count ?? 0) actions")
         }
         catch DecodingError.dataCorrupted(let context) {
-            Logger.swiftUPnP.error("\(context.debugDescription)")
+            Logger.swiftUPnP.error("\(context.debugDescription) \(context.codingPath)")
         } catch DecodingError.keyNotFound(let key, let context) {
             Logger.swiftUPnP.error("\(key.stringValue) was not found, \(context.debugDescription)")
         } catch DecodingError.typeMismatch(let type, let context) {

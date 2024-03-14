@@ -83,4 +83,12 @@ public struct Service: Decodable {
     public let SCPDURL: String
     public let controlURL: String
     public let eventSubURL: String
+    
+    public init(serviceType: String, serviceId: String, SCPDURL: String, controlURL: String, eventSubURL: String) {
+        self.serviceType = serviceType
+        self.serviceId = serviceId
+        self.SCPDURL = SCPDURL
+        self.controlURL = controlURL
+        self.eventSubURL = eventSubURL
+    }
 }
