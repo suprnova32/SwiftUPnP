@@ -142,7 +142,10 @@ public struct DIDLItem: Codable, DynamicNodeDecoding, DynamicNodeEncoding {
                 artistDiscographyURI: URL? = nil,
                 lyricsURI: URL? = nil,
                 originalTrackNumber: UInt32? = nil,
-                originalDiscNumber: UInt32? = nil) {
+                originalDiscNumber: UInt32? = nil,
+                streamInfo: String? = nil,
+                creator: String? = nil,
+                streamContent: String? = nil) {
         self.res = res
         self.desc = desc
         self.`class` = `class`
@@ -163,6 +166,10 @@ public struct DIDLItem: Codable, DynamicNodeDecoding, DynamicNodeEncoding {
         self.parentID = parentID
         self.restricted = restricted
         self.searchable = searchable
+        
+        self.streamInfo = streamInfo
+        self.creator = creator
+        self.streamContent = streamContent
     }
     
     enum CodingKeys: String, CodingKey {
@@ -188,6 +195,10 @@ public struct DIDLItem: Codable, DynamicNodeDecoding, DynamicNodeEncoding {
         case lyricsURI = "upnp:URI"
         case originalTrackNumber = "upnp:originalTrackNumber"
         case originalDiscNumber = "upnp:originalDiscNumber"
+        
+        case streamInfo = "r:streamInfo"
+        case creator = "dc:creator"
+        case streamContent = "r:streamContent"
     }
 
     public let id: String?
@@ -212,6 +223,12 @@ public struct DIDLItem: Codable, DynamicNodeDecoding, DynamicNodeEncoding {
     public let lyricsURI: URL?
     public let originalTrackNumber: UInt32?
     public let originalDiscNumber: UInt32?
+    
+    public let streamInfo: String?
+    public let creator: String?
+    public let streamContent: String?
+    
+    public var resource: DIDLRes? { self.res.first }
     
     static public func nodeDecoding(for key: CodingKey) -> XMLDecoder.NodeDecoding {
         switch key {
