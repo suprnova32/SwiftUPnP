@@ -60,8 +60,7 @@ public class UPnPRegistry {
     }()
     private let types: [String]
     
-    init(types: [String] = ["urn:schemas-upnp-org:device:ZonePlayer:1"],//["urn:schemas-upnp-org:device:MediaServer:1", "urn:linn-co-uk:device:Source:1", "urn:av-openhome-org:device:Source:1"],
-         httpServerPortRange: Range<UInt16> = 51000..<51099) {
+    init(types: [String] = ["urn:schemas-upnp-org:device:ZonePlayer:1"], httpServerPortRange: Range<UInt16> = 51000..<51099) {
         self.types = types.filter { $0.contains(":device:") }
         if self.types.count != types.count {
             Logger.swiftUPnP.error("Only device types are discovered, service types will be discovered indirectly from the device description. Non-device types will be filtered.")

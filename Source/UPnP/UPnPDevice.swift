@@ -152,6 +152,10 @@ extension UPnPDevice {
         services.first(where: { $0.serviceType == "urn:schemas-upnp-org:service:AVTransport:1" }) as? AVTransport1
     }
     
+    public var renderingControl1Service: RenderingControl1Service? {
+        services.first(where: { $0.serviceType == "urn:schemas-upnp-org:service:RenderingControl:1" }) as? RenderingControl1Service
+    }
+    
     public var contentDirectory1Service: ContentDirectory1Service? {
         services.first(where: { $0.serviceType == "urn:schemas-upnp-org:service:ContentDirectory:1" }) as? ContentDirectory1Service
     }
