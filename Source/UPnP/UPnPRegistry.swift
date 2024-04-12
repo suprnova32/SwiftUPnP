@@ -65,7 +65,7 @@ public class UPnPRegistry {
         if self.types.count != types.count {
             Logger.swiftUPnP.error("Only device types are discovered, service types will be discovered indirectly from the device description. Non-device types will be filtered.")
         }
-        httpServerPort = IPHelper.freePortFromRange(range: httpServerPortRange)
+        httpServerPort = 55000 //IPHelper.freePortFromRange(range: httpServerPortRange)
         httpServer = HttpServer()
         httpServer[eventCallBackPath] = { [weak self] request in
             guard let self else { return HttpResponse.internalServerError(.text("Self released")) }
@@ -134,8 +134,13 @@ public class UPnPRegistry {
     }
     
     func callbackUrl() -> URL? {
-        if let ipAddress = IPHelper.getInterfaceIPAddress(interfaceNames: ["en0", "en1"]) {
-            return  URL(string: "http://\(ipAddress):\(httpServerPort)\(eventCallBackPath)")
+        if let ipAddress = IPHelper.getInterfaceIPAddress(interfaceNames: ["utun4", "en0", "en1"]) {
+            print(ipAddress)
+            if ipAddress.starts(with: "100") {
+                return URL(string: "http://192.168.10.100:\(httpServerPort)\(eventCallBackPath)")
+            } else {
+                return  URL(string: "http://\(ipAddress):\(httpServerPort)\(eventCallBackPath)")
+            }
         }
         return nil
     }
