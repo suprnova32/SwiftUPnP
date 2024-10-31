@@ -86,7 +86,9 @@ struct StateVariable: Decodable {
         case string
         case boolean
         case i4
+        case i2
         case ui4
+        case ui2
         case bin_base64 = "bin.base64"
         
         var swiftType: String {
@@ -97,8 +99,12 @@ struct StateVariable: Decodable {
                 return "Bool"
             case .i4:
                 return "Int32"
+            case .i2:
+                return "Int16"
             case .ui4:
                 return "UInt32"
+            case .ui2:
+                return "UInt16"
             case .bin_base64:
                 return "Data"
             }
