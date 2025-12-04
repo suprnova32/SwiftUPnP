@@ -29,15 +29,15 @@ import XMLCoder
 import os.log
 
 public struct DIDLLite: Codable {
-    public init(container: [DIDLContainer], item: [DIDLItem], desc: [DIDLDescription]) {
+    public init(container: [DIDLContainer]? = nil, item: [DIDLItem]? = nil, desc: [DIDLDescription]? = nil) {
         self.container = container
         self.item = item
         self.desc = desc
     }
     
-    public let container: [DIDLContainer]
-    public let item: [DIDLItem]
-    public let desc: [DIDLDescription]
+    public let container: [DIDLContainer]?
+    public let item: [DIDLItem]?
+    public let desc: [DIDLDescription]?
     
     public static func from(_ metadata: String) -> DIDLLite? {
         guard let data = metadata.data(using: .utf8) else { return nil }
@@ -70,9 +70,9 @@ public struct DIDLLite: Codable {
     
     public static func firstItem(_ metadata: String) -> DIDLItem? {
         guard let didl = from(metadata) else { return nil }
-        guard didl.item.count > 0 else { return nil }
+        guard let didlItems = didl.item, !didlItems.isEmpty else { return nil }
         
-        return didl.item[0]
+        return didlItems[0]
     }
 }
 
@@ -105,19 +105,19 @@ public struct DIDLContainer: Codable {
     @Attribute public var childCount: Int?
     @Attribute public var restricted: Bool
     @Attribute public var searchable: Bool?
-    
-    public let container: [DIDLContainer]
-    public let item: [DIDLItem]
-    public let desc: [DIDLDescription]
-    public let res: [DIDLRes]
 
-    public let `class`: String
-    public let title: String
+    public let container: [DIDLContainer]?
+    public let item: [DIDLItem]?
+    public let desc: [DIDLDescription]?
+    public let res: [DIDLRes]?
+
+    public let `class`: String?
+    public let title: String?
     public let creator: String?
     public let date: String?
-    public let artist: [DIDLArtist]
+    public let artist: [DIDLArtist]?
     public let genre: String?
-    public let albumArtURI: [URL]
+    public let albumArtURI: [URL]?
     public let artistDiscographyURI: URL?
     public let lyricsURI: URL?
 }
@@ -128,17 +128,17 @@ public struct DIDLItem: Codable, DynamicNodeDecoding, DynamicNodeEncoding {
                 parentID: String? = nil,
                 restricted: Bool? = nil,
                 searchable: Bool? = nil,
-                res: [DIDLRes],
-                desc: [DIDLDescription],
-                `class`: String,
-                title: String,
+                res: [DIDLRes]? = nil,
+                desc: [DIDLDescription]? = nil,
+                `class`: String? = nil,
+                title: String? = nil,
                 orig: String? = nil,
                 date: String? = nil,
                 album: String? = nil,
-                artist: [DIDLArtist],
+                artist: [DIDLArtist]? = nil,
                 genre: String? = nil,
                 playlist: String? = nil,
-                albumArtURI: [URL],
+                albumArtURI: [URL]? = nil,
                 artistDiscographyURI: URL? = nil,
                 lyricsURI: URL? = nil,
                 originalTrackNumber: UInt32? = nil,
@@ -146,6 +146,11 @@ public struct DIDLItem: Codable, DynamicNodeDecoding, DynamicNodeEncoding {
                 streamInfo: String? = nil,
                 creator: String? = nil,
                 streamContent: String? = nil) {
+        self.id = id
+        self.refID = refID
+        self.parentID = parentID
+        self.restricted = restricted
+        self.searchable = searchable
         self.res = res
         self.desc = desc
         self.`class` = `class`
@@ -161,24 +166,18 @@ public struct DIDLItem: Codable, DynamicNodeDecoding, DynamicNodeEncoding {
         self.lyricsURI = lyricsURI
         self.originalTrackNumber = originalTrackNumber
         self.originalDiscNumber = originalDiscNumber
-        self.id = id
-        self.refID = refID
-        self.parentID = parentID
-        self.restricted = restricted
-        self.searchable = searchable
-        
         self.streamInfo = streamInfo
         self.creator = creator
         self.streamContent = streamContent
     }
-    
+
     enum CodingKeys: String, CodingKey {
         case id
         case refID
         case parentID
         case restricted
         case searchable
-        
+
         case res
         case desc
 
@@ -195,41 +194,41 @@ public struct DIDLItem: Codable, DynamicNodeDecoding, DynamicNodeEncoding {
         case lyricsURI = "upnp:URI"
         case originalTrackNumber = "upnp:originalTrackNumber"
         case originalDiscNumber = "upnp:originalDiscNumber"
-        
+
         case streamInfo = "r:streamInfo"
         case creator = "dc:creator"
         case streamContent = "r:streamContent"
     }
 
+    // Attributes
     public let id: String?
     public let refID: String?
     public let parentID: String?
     public let restricted: Bool?
     public let searchable: Bool?
 
-    public let res: [DIDLRes]
-    public let desc: [DIDLDescription]
-
-    public let `class`: String
-    public let title: String
+    // Elements
+    public let res: [DIDLRes]?
+    public let desc: [DIDLDescription]?
+    public let `class`: String?
+    public let title: String?
     public let orig: String?
     public let date: String?
     public let album: String?
-    public let artist: [DIDLArtist]
+    public let artist: [DIDLArtist]?
     public let genre: String?
     public let playlist: String?
-    public let albumArtURI: [URL]
+    public let albumArtURI: [URL]?
     public let artistDiscographyURI: URL?
     public let lyricsURI: URL?
     public let originalTrackNumber: UInt32?
     public let originalDiscNumber: UInt32?
-    
     public let streamInfo: String?
     public let creator: String?
     public let streamContent: String?
-    
-    public var resource: DIDLRes? { self.res.first }
-    
+
+    public var resource: DIDLRes? { self.res?.first }
+
     static public func nodeDecoding(for key: CodingKey) -> XMLDecoder.NodeDecoding {
         switch key {
         case CodingKeys.id, CodingKeys.refID, CodingKeys.parentID, CodingKeys.restricted, CodingKeys.searchable:
@@ -247,7 +246,6 @@ public struct DIDLItem: Codable, DynamicNodeDecoding, DynamicNodeEncoding {
             return .element
         }
     }
-
 }
 
 public struct DIDLDescription: Codable, DynamicNodeDecoding {
@@ -258,11 +256,11 @@ public struct DIDLDescription: Codable, DynamicNodeDecoding {
         case value = ""
     }
 
-    public let id: String
+    public let id: String?
     public let type: String?
-    public let nameSpace: URL
-    public let value: String
-    
+    public let nameSpace: URL?
+    public let value: String?
+
     static public func nodeDecoding(for key: CodingKey) -> XMLDecoder.NodeDecoding {
         switch key {
         case CodingKeys.value:
@@ -273,12 +271,11 @@ public struct DIDLDescription: Codable, DynamicNodeDecoding {
     }
 }
 
-// Combination of value with attributes doesn't work (yet) with XMLCoder, revert to DynamicNodeDecoding
 public struct DIDLRes: Codable, DynamicNodeDecoding, DynamicNodeEncoding {
     public init(importUri: URL? = nil,
                 protocolInfo: String? = nil,
-                size: UInt64? = nil, duration:
-                String? = nil,
+                size: UInt64? = nil,
+                duration: String? = nil,
                 bitrate: UInt? = nil,
                 sampleFrequency: UInt? = nil,
                 bitsPerSample: UInt? = nil,
@@ -286,7 +283,7 @@ public struct DIDLRes: Codable, DynamicNodeDecoding, DynamicNodeEncoding {
                 colorDepth: UInt? = nil,
                 protection: String? = nil,
                 resolution: String? = nil,
-                value: URL) {
+                value: URL? = nil) {
         self.importUri = importUri
         self.protocolInfo = protocolInfo
         self.size = size
@@ -300,7 +297,7 @@ public struct DIDLRes: Codable, DynamicNodeDecoding, DynamicNodeEncoding {
         self.resolution = resolution
         self.value = value
     }
-    
+
     enum CodingKeys: String, CodingKey {
         case importUri
         case protocolInfo
@@ -315,7 +312,8 @@ public struct DIDLRes: Codable, DynamicNodeDecoding, DynamicNodeEncoding {
         case resolution
         case value = ""
     }
-    
+
+    // Attributes
     public let importUri: URL?
     public let protocolInfo: String?
     public let size: UInt64?
@@ -327,9 +325,10 @@ public struct DIDLRes: Codable, DynamicNodeDecoding, DynamicNodeEncoding {
     public let colorDepth: UInt?
     public let protection: String?
     public let resolution: String?
-    
-    public let value: URL
-    
+
+    // Content
+    public let value: URL?
+
     static public func nodeDecoding(for key: CodingKey) -> XMLDecoder.NodeDecoding {
         switch key {
         case CodingKeys.value:
@@ -338,7 +337,7 @@ public struct DIDLRes: Codable, DynamicNodeDecoding, DynamicNodeEncoding {
             return .attribute
         }
     }
-    
+
     static public func nodeEncoding(for key: CodingKey) -> XMLEncoder.NodeEncoding {
         switch key {
         case CodingKeys.value:
@@ -349,21 +348,20 @@ public struct DIDLRes: Codable, DynamicNodeDecoding, DynamicNodeEncoding {
     }
 }
 
-// Combination of value with attributes doesn't work (yet) with XMLCoder, revert to DynamicNodeDecoding
 public struct DIDLArtist: Codable, DynamicNodeDecoding, DynamicNodeEncoding {
-    public init(role: String? = nil, value: String) {
+    public init(role: String? = nil, value: String? = nil) {
         self.role = role
         self.value = value
     }
-    
+
     enum CodingKeys: String, CodingKey {
         case role
         case value = ""
     }
-    
+
     public let role: String?
-    public let value: String
-    
+    public let value: String?
+
     static public func nodeDecoding(for key: CodingKey) -> XMLDecoder.NodeDecoding {
         switch key {
         case CodingKeys.value:
@@ -372,7 +370,7 @@ public struct DIDLArtist: Codable, DynamicNodeDecoding, DynamicNodeEncoding {
             return .attribute
         }
     }
-    
+
     static public func nodeEncoding(for key: CodingKey) -> XMLEncoder.NodeEncoding {
         switch key {
         case CodingKeys.value:
@@ -383,23 +381,24 @@ public struct DIDLArtist: Codable, DynamicNodeDecoding, DynamicNodeEncoding {
     }
 }
 
-
 public struct BrowseDIDLResponse {
-    public let container: [DIDLContainer]
-    public let item: [DIDLItem]
+    public let container: [DIDLContainer]?
+    public let item: [DIDLItem]?
 
     public let numberReturned: UInt32
     public let totalMatches: UInt32
     public let updateID: UInt32
 }
+
 public struct SearchDIDLResponse {
-    public let container: [DIDLContainer]
-    public let item: [DIDLItem]
+    public let container: [DIDLContainer]?
+    public let item: [DIDLItem]?
 
     public let numberReturned: UInt32
     public let totalMatches: UInt32
     public let updateID: UInt32
 }
+
 public extension ContentDirectory1Service {
     func browseDIDL(objectID: String, browseFlag: A_ARG_TYPE_BrowseFlagEnum, filter: String, startingIndex: UInt32, requestedCount: UInt32, sortCriteria: String) async throws -> BrowseDIDLResponse {
         let response = try await browse(objectID: objectID,
@@ -408,22 +407,22 @@ public extension ContentDirectory1Service {
                                         startingIndex: startingIndex,
                                         requestedCount: requestedCount,
                                         sortCriteria: sortCriteria)
-        
+
         let decoder = XMLDecoder()
         decoder.shouldProcessNamespaces = false
-        
+
         guard let data = response.result.data(using: .utf8) else {
             throw ServiceParseError.noValidResponse
         }
         let didl = try decoder.decode(DIDLLite.self, from: data)
-        
+
         return BrowseDIDLResponse(container: didl.container,
                                   item: didl.item,
                                   numberReturned: response.numberReturned,
                                   totalMatches: response.totalMatches,
                                   updateID: response.updateID)
     }
-    
+
     func searchDIDL(containerID: String, searchCriteria: String, filter: String, startingIndex: UInt32, requestedCount: UInt32, sortCriteria: String) async throws -> SearchDIDLResponse {
         let response = try await search(containerID: containerID,
                                         searchCriteria: searchCriteria,
@@ -431,10 +430,10 @@ public extension ContentDirectory1Service {
                                         startingIndex: startingIndex,
                                         requestedCount: requestedCount,
                                         sortCriteria: sortCriteria)
-        
+
         let decoder = XMLDecoder()
         decoder.shouldProcessNamespaces = false
-        
+
         guard let data = response.result.data(using: .utf8) else {
             throw ServiceParseError.noValidResponse
         }
