@@ -29,26 +29,28 @@ import XMLCoder
 import os.log
 
 public struct DIDLLite: Codable {
-    public init(container: [DIDLContainer]? = nil, item: [DIDLItem]? = nil, desc: [DIDLDescription]? = nil) {
+    public init(
+        container: [DIDLContainer]? = nil, item: [DIDLItem]? = nil, desc: [DIDLDescription]? = nil
+    ) {
         self.container = container
         self.item = item
         self.desc = desc
     }
-    
+
     public let container: [DIDLContainer]?
     public let item: [DIDLItem]?
     public let desc: [DIDLDescription]?
-    
+
     public static func from(_ metadata: String) -> DIDLLite? {
-        guard let data = metadata.data(using: .utf8) else { return nil }
-        
+        let sanitized = sanitizeXML(metadata)
+        guard let data = sanitized.data(using: .utf8) else { return nil }
+
         do {
             let decoder = XMLDecoder()
             decoder.shouldProcessNamespaces = false
-            
+
             return try decoder.decode(DIDLLite.self, from: data)
-        }
-        catch DecodingError.dataCorrupted(let context) {
+        } catch DecodingError.dataCorrupted(let context) {
             Logger.swiftUPnP.error("\(metadata)")
             Logger.swiftUPnP.error("\(context.debugDescription)")
         } catch DecodingError.keyNotFound(let key, let context) {
@@ -64,14 +66,29 @@ public struct DIDLLite: Codable {
             Logger.swiftUPnP.error("\(metadata)")
             Logger.swiftUPnP.error("Unknown error \(error.localizedDescription)")
         }
-        
+
         return nil
     }
-    
+
+    private static func sanitizeXML(_ xml: String) -> String {
+        // Escape unescaped ampersands - the most common issue with Sonos metadata
+        // The regex matches & that is NOT followed by a valid XML entity
+        let ampersandPattern = "&(?!(amp|lt|gt|quot|apos|#\\d+|#x[0-9a-fA-F]+);)"
+        guard let regex = try? NSRegularExpression(pattern: ampersandPattern, options: []) else {
+            return xml
+        }
+        return regex.stringByReplacingMatches(
+            in: xml,
+            options: [],
+            range: NSRange(xml.startIndex..., in: xml),
+            withTemplate: "&amp;"
+        )
+    }
+
     public static func firstItem(_ metadata: String) -> DIDLItem? {
         guard let didl = from(metadata) else { return nil }
         guard let didlItems = didl.item, !didlItems.isEmpty else { return nil }
-        
+
         return didlItems[0]
     }
 }
@@ -123,29 +140,31 @@ public struct DIDLContainer: Codable {
 }
 
 public struct DIDLItem: Codable, DynamicNodeDecoding, DynamicNodeEncoding {
-    public init(id: String? = nil,
-                refID: String? = nil,
-                parentID: String? = nil,
-                restricted: Bool? = nil,
-                searchable: Bool? = nil,
-                res: [DIDLRes]? = nil,
-                desc: [DIDLDescription]? = nil,
-                `class`: String? = nil,
-                title: String? = nil,
-                orig: String? = nil,
-                date: String? = nil,
-                album: String? = nil,
-                artist: [DIDLArtist]? = nil,
-                genre: String? = nil,
-                playlist: String? = nil,
-                albumArtURI: [URL]? = nil,
-                artistDiscographyURI: URL? = nil,
-                lyricsURI: URL? = nil,
-                originalTrackNumber: UInt32? = nil,
-                originalDiscNumber: UInt32? = nil,
-                streamInfo: String? = nil,
-                creator: String? = nil,
-                streamContent: String? = nil) {
+    public init(
+        id: String? = nil,
+        refID: String? = nil,
+        parentID: String? = nil,
+        restricted: Bool? = nil,
+        searchable: Bool? = nil,
+        res: [DIDLRes]? = nil,
+        desc: [DIDLDescription]? = nil,
+        `class`: String? = nil,
+        title: String? = nil,
+        orig: String? = nil,
+        date: String? = nil,
+        album: String? = nil,
+        artist: [DIDLArtist]? = nil,
+        genre: String? = nil,
+        playlist: String? = nil,
+        albumArtURI: [URL]? = nil,
+        artistDiscographyURI: URL? = nil,
+        lyricsURI: URL? = nil,
+        originalTrackNumber: UInt32? = nil,
+        originalDiscNumber: UInt32? = nil,
+        streamInfo: String? = nil,
+        creator: String? = nil,
+        streamContent: String? = nil
+    ) {
         self.id = id
         self.refID = refID
         self.parentID = parentID
@@ -231,7 +250,8 @@ public struct DIDLItem: Codable, DynamicNodeDecoding, DynamicNodeEncoding {
 
     static public func nodeDecoding(for key: CodingKey) -> XMLDecoder.NodeDecoding {
         switch key {
-        case CodingKeys.id, CodingKeys.refID, CodingKeys.parentID, CodingKeys.restricted, CodingKeys.searchable:
+        case CodingKeys.id, CodingKeys.refID, CodingKeys.parentID, CodingKeys.restricted,
+            CodingKeys.searchable:
             return .attribute
         default:
             return .element
@@ -240,7 +260,8 @@ public struct DIDLItem: Codable, DynamicNodeDecoding, DynamicNodeEncoding {
 
     static public func nodeEncoding(for key: CodingKey) -> XMLEncoder.NodeEncoding {
         switch key {
-        case CodingKeys.id, CodingKeys.refID, CodingKeys.parentID, CodingKeys.restricted, CodingKeys.searchable:
+        case CodingKeys.id, CodingKeys.refID, CodingKeys.parentID, CodingKeys.restricted,
+            CodingKeys.searchable:
             return .attribute
         default:
             return .element
@@ -272,18 +293,20 @@ public struct DIDLDescription: Codable, DynamicNodeDecoding {
 }
 
 public struct DIDLRes: Codable, DynamicNodeDecoding, DynamicNodeEncoding {
-    public init(importUri: URL? = nil,
-                protocolInfo: String? = nil,
-                size: UInt64? = nil,
-                duration: String? = nil,
-                bitrate: UInt? = nil,
-                sampleFrequency: UInt? = nil,
-                bitsPerSample: UInt? = nil,
-                nrAudioChannels: UInt? = nil,
-                colorDepth: UInt? = nil,
-                protection: String? = nil,
-                resolution: String? = nil,
-                value: URL? = nil) {
+    public init(
+        importUri: URL? = nil,
+        protocolInfo: String? = nil,
+        size: UInt64? = nil,
+        duration: String? = nil,
+        bitrate: UInt? = nil,
+        sampleFrequency: UInt? = nil,
+        bitsPerSample: UInt? = nil,
+        nrAudioChannels: UInt? = nil,
+        colorDepth: UInt? = nil,
+        protection: String? = nil,
+        resolution: String? = nil,
+        value: URL? = nil
+    ) {
         self.importUri = importUri
         self.protocolInfo = protocolInfo
         self.size = size
@@ -399,14 +422,18 @@ public struct SearchDIDLResponse {
     public let updateID: UInt32
 }
 
-public extension ContentDirectory1Service {
-    func browseDIDL(objectID: String, browseFlag: A_ARG_TYPE_BrowseFlagEnum, filter: String, startingIndex: UInt32, requestedCount: UInt32, sortCriteria: String) async throws -> BrowseDIDLResponse {
-        let response = try await browse(objectID: objectID,
-                                        browseFlag: browseFlag,
-                                        filter: filter,
-                                        startingIndex: startingIndex,
-                                        requestedCount: requestedCount,
-                                        sortCriteria: sortCriteria)
+extension ContentDirectory1Service {
+    public func browseDIDL(
+        objectID: String, browseFlag: A_ARG_TYPE_BrowseFlagEnum, filter: String,
+        startingIndex: UInt32, requestedCount: UInt32, sortCriteria: String
+    ) async throws -> BrowseDIDLResponse {
+        let response = try await browse(
+            objectID: objectID,
+            browseFlag: browseFlag,
+            filter: filter,
+            startingIndex: startingIndex,
+            requestedCount: requestedCount,
+            sortCriteria: sortCriteria)
 
         let decoder = XMLDecoder()
         decoder.shouldProcessNamespaces = false
@@ -416,20 +443,25 @@ public extension ContentDirectory1Service {
         }
         let didl = try decoder.decode(DIDLLite.self, from: data)
 
-        return BrowseDIDLResponse(container: didl.container,
-                                  item: didl.item,
-                                  numberReturned: response.numberReturned,
-                                  totalMatches: response.totalMatches,
-                                  updateID: response.updateID)
+        return BrowseDIDLResponse(
+            container: didl.container,
+            item: didl.item,
+            numberReturned: response.numberReturned,
+            totalMatches: response.totalMatches,
+            updateID: response.updateID)
     }
 
-    func searchDIDL(containerID: String, searchCriteria: String, filter: String, startingIndex: UInt32, requestedCount: UInt32, sortCriteria: String) async throws -> SearchDIDLResponse {
-        let response = try await search(containerID: containerID,
-                                        searchCriteria: searchCriteria,
-                                        filter: filter,
-                                        startingIndex: startingIndex,
-                                        requestedCount: requestedCount,
-                                        sortCriteria: sortCriteria)
+    public func searchDIDL(
+        containerID: String, searchCriteria: String, filter: String, startingIndex: UInt32,
+        requestedCount: UInt32, sortCriteria: String
+    ) async throws -> SearchDIDLResponse {
+        let response = try await search(
+            containerID: containerID,
+            searchCriteria: searchCriteria,
+            filter: filter,
+            startingIndex: startingIndex,
+            requestedCount: requestedCount,
+            sortCriteria: sortCriteria)
 
         let decoder = XMLDecoder()
         decoder.shouldProcessNamespaces = false
@@ -439,10 +471,11 @@ public extension ContentDirectory1Service {
         }
         let didl = try decoder.decode(DIDLLite.self, from: data)
 
-        return SearchDIDLResponse(container: didl.container,
-                                  item: didl.item,
-                                  numberReturned: response.numberReturned,
-                                  totalMatches: response.totalMatches,
-                                  updateID: response.updateID)
+        return SearchDIDLResponse(
+            container: didl.container,
+            item: didl.item,
+            numberReturned: response.numberReturned,
+            totalMatches: response.totalMatches,
+            updateID: response.updateID)
     }
 }

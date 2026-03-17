@@ -95,8 +95,13 @@ public class UPnPService: Equatable, Identifiable, Hashable {
         subscriptionStatus = .unsubscribing
         return true
     }
+    private var renewalWorkItem: DispatchWorkItem?
     private var bag = Set<AnyCancellable>()
     
+    deinit {
+        renewalWorkItem?.cancel()
+    }
+
     internal init(device: UPnPDevice, controlUrl: URL, scpdUrl: URL, eventUrl: URL?, serviceType: String, serviceId: String, eventPublisher: AnyPublisher<(String, Data), Never>, eventCallbackUrl: URL?) {
         self.device = device
         self.controlUrl = controlUrl
@@ -256,12 +261,15 @@ public class UPnPService: Equatable, Identifiable, Hashable {
                let secondKeywordRange = timeoutString.range(of: "Second-"),
                let timeout = Int(timeoutString[secondKeywordRange.upperBound...]) {
                 Logger.swiftUPnP.debug("Will renew sid: \(subscriptionId) at: \(Date(timeIntervalSinceNow: Double(timeout - 10)))")
-                DispatchQueue.main.asyncAfter(deadline: DispatchTime.now().advanced(by: .seconds(timeout - 10))) { [weak self] in
+                renewalWorkItem?.cancel()
+                let workItem = DispatchWorkItem { [weak self] in
                     guard let self else { return }
                     Task {
                         await self.renewSubscriptionToEvents()
                     }
                 }
+                renewalWorkItem = workItem
+                DispatchQueue.main.asyncAfter(deadline: DispatchTime.now().advanced(by: .seconds(timeout - 10)), execute: workItem)
                 
                 Logger.swiftUPnP.debug("Successfully \(type) for: \(timeout) seconds sid: \(subscriptionId)")
                 await self.setSubcriptionStatus(.subscribed, subscriptionId: subscriptionId)
@@ -270,6 +278,8 @@ public class UPnPService: Equatable, Identifiable, Hashable {
     }
     
     public func unsubscribeFromEvents() async {
+        renewalWorkItem?.cancel()
+        renewalWorkItem = nil
         guard let eventUrl = eventUrl, await startUnubcribing() else { return }
         
         var request = URLRequest(url: eventUrl)
