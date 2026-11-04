@@ -131,7 +131,8 @@ struct IPHelper {
 }
 
 extension Logger {
-    private static var subsystem = Bundle.main.bundleIdentifier!
+    /// A test host or a command-line tool has no bundle identifier; fall back rather than crash.
+    private static var subsystem = Bundle.main.bundleIdentifier ?? "SwiftUPnP"
 
     /// Logs the view cycles like viewDidLoad.
     static let swiftUPnP = Logger(subsystem: subsystem, category: "SwiftUPnP")

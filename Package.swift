@@ -17,7 +17,9 @@ let package = Package(
     ],
     dependencies: [
         // Dependencies declare other packages that this package depends on.
-        .package(url: "https://github.com/CoreOffice/XMLCoder.git", from: "0.13.1"),
+        // The app that consumes this package resolves XMLCoder itself; the floor keeps `swift test`
+        // on the same parser version the app ships.
+        .package(url: "https://github.com/CoreOffice/XMLCoder.git", from: "0.18.2"),
         .package(url: "https://github.com/httpswift/swifter", branch: "stable"),
         .package(url: "https://github.com/robbiehanson/CocoaAsyncSocket", branch: "master"),
     ],
@@ -34,5 +36,10 @@ let package = Package(
             name: "UPnPCodeGenerator",
             dependencies: ["XMLCoder"],
             path: "CodeGenerator"),
+        .testTarget(
+            name: "SwiftUPnPTests",
+            dependencies: ["SwiftUPnP"],
+            path: "Tests/SwiftUPnPTests",
+            resources: [.copy("Fixtures")]),
     ]
 )

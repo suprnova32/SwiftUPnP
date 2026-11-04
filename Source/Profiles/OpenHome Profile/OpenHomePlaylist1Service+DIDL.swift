@@ -80,14 +80,11 @@ public extension OpenHomePlaylist1Service {
         
         let decoder = XMLDecoder()
         decoder.shouldProcessNamespaces = true
-        let trackList = try XMLDecoder().decode(TrackList.self, from: trackListData)
+        let trackList = try decoder.decode(TrackList.self, from: trackListData)
             
         return ReadListDIDLResponse(tracks: try trackList.entry.map {
-            guard let data = $0.metadata.data(using: .utf8) else {
-                throw ServiceParseError.noValidResponse
-            }
-            decoder.shouldProcessNamespaces = false
-            let didl = try decoder.decode(DIDLLite.self, from: data)
+            // The shared decoder: sanitized, namespaces off, like every other DIDL path
+            let didl = try DIDLLite.decode($0.metadata)
 
             return ReadListDIDLResponse.Track(id: $0.id, uri: $0.uri, didl: didl)
         })

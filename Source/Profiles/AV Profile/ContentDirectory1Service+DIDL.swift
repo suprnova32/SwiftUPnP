@@ -41,15 +41,35 @@ public struct DIDLLite: Codable {
     public let item: [DIDLItem]?
     public let desc: [DIDLDescription]?
 
+    /// Sees every raw metadata string before it is sanitized and decoded, on whatever thread
+    /// decodes it. A debug build of an app installs a recorder here to collect fixtures.
+    nonisolated(unsafe) public static var rawMetadataObserver: ((String) -> Void)?
+
+    /// The decoder every DIDL-Lite path uses: prefixed keys (`dc:title`, `upnp:class`, `r:streamInfo`),
+    /// so namespace processing stays off. With it on, Foundation's parser reports local names and
+    /// none of the keys match.
+    static func decoder() -> XMLDecoder {
+        let decoder = XMLDecoder()
+        decoder.shouldProcessNamespaces = false
+        // The parser delivers text around entity references in chunks; trimming each chunk drops a
+        // whitespace-only one, so "a &amp; b" would decode as "a &b". Sonos sends single-line
+        // DIDL with no decorative whitespace, so nothing is lost by keeping it all.
+        decoder.trimValueWhitespaces = false
+        return decoder
+    }
+
+    /// Sanitizes and decodes; throws the decoder's error unchanged so a caller can log or
+    /// surface it. `from(_:)` is the logging, nil-returning wrapper.
+    public static func decode(_ metadata: String) throws -> DIDLLite {
+        rawMetadataObserver?(metadata)
+        let sanitized = sanitize(metadata)
+        guard let data = sanitized.data(using: .utf8) else { throw ServiceParseError.noValidResponse }
+        return try decoder().decode(DIDLLite.self, from: data)
+    }
+
     public static func from(_ metadata: String) -> DIDLLite? {
-        let sanitized = sanitizeXML(metadata)
-        guard let data = sanitized.data(using: .utf8) else { return nil }
-
         do {
-            let decoder = XMLDecoder()
-            decoder.shouldProcessNamespaces = false
-
-            return try decoder.decode(DIDLLite.self, from: data)
+            return try decode(metadata)
         } catch DecodingError.dataCorrupted(let context) {
             Logger.swiftUPnP.error("\(metadata)")
             Logger.swiftUPnP.error("\(context.debugDescription)")
@@ -70,19 +90,24 @@ public struct DIDLLite: Codable {
         return nil
     }
 
-    private static func sanitizeXML(_ xml: String) -> String {
-        // Escape unescaped ampersands - the most common issue with Sonos metadata
-        // The regex matches & that is NOT followed by a valid XML entity
-        let ampersandPattern = "&(?!(amp|lt|gt|quot|apos|#\\d+|#x[0-9a-fA-F]+);)"
-        guard let regex = try? NSRegularExpression(pattern: ampersandPattern, options: []) else {
-            return xml
-        }
-        return regex.stringByReplacingMatches(
-            in: xml,
-            options: [],
-            range: NSRange(xml.startIndex..., in: xml),
-            withTemplate: "&amp;"
-        )
+    /// Repairs what Sonos and NAS indexers send that XML 1.0 forbids: a bare `&` (an ampersand not
+    /// starting an entity) becomes `&amp;`, and C0 control characters other than tab, LF and CR
+    /// are dropped. Valid entities, including numeric ones, are left alone; idempotent.
+    static func sanitize(_ xml: String) -> String {
+        let escaped = Self.bareAmpersand.stringByReplacingMatches(
+            in: xml, options: [], range: NSRange(xml.startIndex..., in: xml), withTemplate: "&amp;")
+        guard escaped.unicodeScalars.contains(where: Self.isForbiddenControl) else { return escaped }
+        var scalars = String.UnicodeScalarView()
+        scalars.append(contentsOf: escaped.unicodeScalars.filter { !Self.isForbiddenControl($0) })
+        return String(scalars)
+    }
+
+    /// An `&` that is not followed by a named or numeric entity reference.
+    private static let bareAmpersand = try! NSRegularExpression(
+        pattern: "&(?!(amp|lt|gt|quot|apos|#\\d+|#x[0-9a-fA-F]+);)", options: [])
+
+    private static func isForbiddenControl(_ scalar: Unicode.Scalar) -> Bool {
+        scalar.value < 0x20 && scalar != "\t" && scalar != "\n" && scalar != "\r"
     }
 
     public static func firstItem(_ metadata: String) -> DIDLItem? {
@@ -134,9 +159,13 @@ public struct DIDLContainer: Codable {
     public let date: String?
     public let artist: [DIDLArtist]?
     public let genre: String?
-    public let albumArtURI: [URL]?
-    public let artistDiscographyURI: URL?
-    public let lyricsURI: URL?
+    /// Raw strings: Sonos sends relative paths (`/getaa?…`) the caller completes with the room's
+    /// base URL, and one malformed value must not fail the whole container.
+    public let albumArtURI: [String]?
+    public let artistDiscographyURI: String?
+    public let lyricsURI: String?
+
+    public var albumArtURL: URL? { albumArtURI?.first.flatMap(URL.init(string:)) }
 }
 
 public struct DIDLItem: Codable, DynamicNodeDecoding, DynamicNodeEncoding {
@@ -156,9 +185,9 @@ public struct DIDLItem: Codable, DynamicNodeDecoding, DynamicNodeEncoding {
         artist: [DIDLArtist]? = nil,
         genre: String? = nil,
         playlist: String? = nil,
-        albumArtURI: [URL]? = nil,
-        artistDiscographyURI: URL? = nil,
-        lyricsURI: URL? = nil,
+        albumArtURI: [String]? = nil,
+        artistDiscographyURI: String? = nil,
+        lyricsURI: String? = nil,
         originalTrackNumber: UInt32? = nil,
         originalDiscNumber: UInt32? = nil,
         streamInfo: String? = nil,
@@ -237,9 +266,10 @@ public struct DIDLItem: Codable, DynamicNodeDecoding, DynamicNodeEncoding {
     public let artist: [DIDLArtist]?
     public let genre: String?
     public let playlist: String?
-    public let albumArtURI: [URL]?
-    public let artistDiscographyURI: URL?
-    public let lyricsURI: URL?
+    /// Raw strings, see `DIDLContainer.albumArtURI`.
+    public let albumArtURI: [String]?
+    public let artistDiscographyURI: String?
+    public let lyricsURI: String?
     public let originalTrackNumber: UInt32?
     public let originalDiscNumber: UInt32?
     public let streamInfo: String?
@@ -247,6 +277,7 @@ public struct DIDLItem: Codable, DynamicNodeDecoding, DynamicNodeEncoding {
     public let streamContent: String?
 
     public var resource: DIDLRes? { self.res?.first }
+    public var albumArtURL: URL? { albumArtURI?.first.flatMap(URL.init(string:)) }
 
     static public func nodeDecoding(for key: CodingKey) -> XMLDecoder.NodeDecoding {
         switch key {
@@ -269,7 +300,7 @@ public struct DIDLItem: Codable, DynamicNodeDecoding, DynamicNodeEncoding {
     }
 }
 
-public struct DIDLDescription: Codable, DynamicNodeDecoding {
+public struct DIDLDescription: Codable, Sendable, DynamicNodeDecoding {
     enum CodingKeys: String, CodingKey {
         case id
         case type
@@ -279,7 +310,7 @@ public struct DIDLDescription: Codable, DynamicNodeDecoding {
 
     public let id: String?
     public let type: String?
-    public let nameSpace: URL?
+    public let nameSpace: String?
     public let value: String?
 
     static public func nodeDecoding(for key: CodingKey) -> XMLDecoder.NodeDecoding {
@@ -294,7 +325,7 @@ public struct DIDLDescription: Codable, DynamicNodeDecoding {
 
 public struct DIDLRes: Codable, DynamicNodeDecoding, DynamicNodeEncoding {
     public init(
-        importUri: URL? = nil,
+        importUri: String? = nil,
         protocolInfo: String? = nil,
         size: UInt64? = nil,
         duration: String? = nil,
@@ -305,7 +336,7 @@ public struct DIDLRes: Codable, DynamicNodeDecoding, DynamicNodeEncoding {
         colorDepth: UInt? = nil,
         protection: String? = nil,
         resolution: String? = nil,
-        value: URL? = nil
+        value: String? = nil
     ) {
         self.importUri = importUri
         self.protocolInfo = protocolInfo
@@ -337,7 +368,7 @@ public struct DIDLRes: Codable, DynamicNodeDecoding, DynamicNodeEncoding {
     }
 
     // Attributes
-    public let importUri: URL?
+    public let importUri: String?
     public let protocolInfo: String?
     public let size: UInt64?
     public let duration: String?
@@ -349,8 +380,11 @@ public struct DIDLRes: Codable, DynamicNodeDecoding, DynamicNodeEncoding {
     public let protection: String?
     public let resolution: String?
 
-    // Content
-    public let value: URL?
+    // Content: the resource URI as sent (`x-sonos-http:…`, `x-file-cifs://…`); a value that is not
+    // a well-formed URL still decodes, so one odd resource does not fail the item.
+    public let value: String?
+
+    public var url: URL? { value.flatMap(URL.init(string:)) }
 
     static public func nodeDecoding(for key: CodingKey) -> XMLDecoder.NodeDecoding {
         switch key {
@@ -435,13 +469,7 @@ extension ContentDirectory1Service {
             requestedCount: requestedCount,
             sortCriteria: sortCriteria)
 
-        let decoder = XMLDecoder()
-        decoder.shouldProcessNamespaces = false
-
-        guard let data = response.result.data(using: .utf8) else {
-            throw ServiceParseError.noValidResponse
-        }
-        let didl = try decoder.decode(DIDLLite.self, from: data)
+        let didl = try DIDLLite.decode(response.result)
 
         return BrowseDIDLResponse(
             container: didl.container,
@@ -463,13 +491,7 @@ extension ContentDirectory1Service {
             requestedCount: requestedCount,
             sortCriteria: sortCriteria)
 
-        let decoder = XMLDecoder()
-        decoder.shouldProcessNamespaces = false
-
-        guard let data = response.result.data(using: .utf8) else {
-            throw ServiceParseError.noValidResponse
-        }
-        let didl = try decoder.decode(DIDLLite.self, from: data)
+        let didl = try DIDLLite.decode(response.result)
 
         return SearchDIDLResponse(
             container: didl.container,
