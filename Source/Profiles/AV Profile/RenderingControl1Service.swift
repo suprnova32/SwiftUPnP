@@ -27,7 +27,7 @@ import Combine
 import XMLCoder
 import os.log
 
-public class RenderingControl1Service: UPnPService {
+public class RenderingControl1Service: UPnPService, @unchecked Sendable {
 	struct Envelope<T: Codable>: Codable {
 		enum CodingKeys: String, CodingKey {
 			case body = "s:Body"
@@ -1183,5 +1183,9 @@ extension RenderingControl1Service {
 				return try? self.state(xml: $0)
 			}
 			.eraseToAnyPublisher()
+	}
+
+	public var stateChangeStream: AsyncStream<State> {
+		stateSubject.stream
 	}
 }

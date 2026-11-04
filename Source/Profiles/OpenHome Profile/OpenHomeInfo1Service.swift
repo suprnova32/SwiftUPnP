@@ -27,7 +27,7 @@ import Combine
 import XMLCoder
 import os.log
 
-public class OpenHomeInfo1Service: UPnPService {
+public class OpenHomeInfo1Service: UPnPService, @unchecked Sendable {
 	struct Envelope<T: Codable>: Codable {
 		enum CodingKeys: String, CodingKey {
 			case body = "s:Body"
@@ -314,5 +314,9 @@ extension OpenHomeInfo1Service {
 				return try? self.state(xml: $0)
 			}
 			.eraseToAnyPublisher()
+	}
+
+	public var stateChangeStream: AsyncStream<State> {
+		stateSubject.stream
 	}
 }

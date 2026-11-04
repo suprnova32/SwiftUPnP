@@ -1,6 +1,7 @@
 [![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fkatoemba%2FSwiftUPnP%2Fbadge%3Ftype%3Dswift-versions)](https://swiftpackageindex.com/katoemba/SwiftUPnP)
 [![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fkatoemba%2FSwiftUPnP%2Fbadge%3Ftype%3Dplatforms)](https://swiftpackageindex.com/katoemba/SwiftUPnP)
 [![Swift Package Manager](https://img.shields.io/badge/Swift_Package_Manager-compatible-green)](https://img.shields.io/badge/Swift_Package_Manager-compatible-green)
+[![bitrise CI](https://img.shields.io/bitrise/4821d650-38ae-4d26-b81d-bfca611d691b?token=86TPT9nYntoaEFj7c6blxw)](https://bitrise.io)
 
 # SwiftUPnP
 SwiftUPnP is a Swift-based library that provides a comprehensive set of APIs for developers to implement the UPnP (Universal Plug and Play) and OpenHome protocols. With SwiftUPnP, developers can integrate UPnP and OpenHome support into their iOS, macOS, and tvOS apps, allowing users to discover and control audio devices on their network.
@@ -44,6 +45,10 @@ Only devices are discovered, the available sources are loaded based on the descr
     }
 
     public func startListening() {
+        // A list of device types can be passed to discover. The default devices types used when nothing is specified:
+        // urn:schemas-upnp-org:device:MediaServer:1
+        // urn:linn-co-uk:device:Source:1
+        // urn:av-openhome-org:device:Source:1
         try? openHomeRegistry.startDiscovery()
     }
     
@@ -51,6 +56,44 @@ Only devices are discovered, the available sources are loaded based on the descr
         openHomeRegistry.stopDiscovery()
     }
 ```
+
+Alternatively you can loop over an AsyncStream:
+
+```swift
+    private let openHomeRegistry = UPnPRegistry.shared
+
+    public init() {
+        Task {
+            for await device in openHomeRegistry.deviceAddedStream {
+                print("Detected device \(device.deviceDefinition.device.friendlyName) of type \(device.deviceType)")        
+            }
+        }
+    
+        Task {
+            for await device in openHomeRegistry.deviceRemovedStream {
+                print("Removed device \(device.deviceDefinition.device.friendlyName) of type \(device.deviceType)")        
+            }
+        }
+    }
+
+    public func startListening() {
+        // A list of device types can be passed to discover. The default devices types used when nothing is specified:
+        // urn:schemas-upnp-org:device:MediaServer:1
+        // urn:linn-co-uk:device:Source:1
+        // urn:av-openhome-org:device:Source:1
+        try? openHomeRegistry.startDiscovery()
+    }
+    
+    public func stopListening() {
+        openHomeRegistry.stopDiscovery()
+    }
+```
+
+## Multicast permission
+To use device discovery on iOS, you need to request permission from Apple to make multicast requests. The page https://developer.apple.com/documentation/bundleresources/entitlements/com_apple_developer_networking_multicast contains a link where you can request this permission for your app. After being granted this permission, you need to add the following key to your app's .plist file:
+
+`<key>com.apple.developer.networking.multicast</key>`<br> 
+`<true/>`
 
 ## Actions
 UPnP actions and responses are strongly typed, no key-value pairs. This is done through Codable structs. All action calls are implemented as async functions.
@@ -63,7 +106,7 @@ UPnP actions and responses are strongly typed, no key-value pairs. This is done 
 
 ## State changes
 Every service implementation has a Combine publisher stateSubject. When the service subscribes to state changes via subscribeToEvents(), those events will be delivered on the stateSubject as strongly typed structs.
-To receive state changes, a small webserver will be run (Swifter).
+To receive state changes, a small webserver will be run.
 
 ```swift
     let device: UPnPDevice
@@ -75,6 +118,24 @@ To receive state changes, a small webserver will be run (Swifter).
                 print("Received volume change, volume = \($0.volume ?? -1)")
             }
             .store(in: &cancellables)
+            
+        Task {
+            await service.subscribeToEvents()
+        }
+    }
+```
+
+Alternatively you can loop over an AsyncStream:
+
+```swift
+    let device: UPnPDevice
+
+    if let service = device.openHomeVolume1Service {
+        Task {
+            for await volumeChange in service.stateChangeStream {
+                print("Received volume change, volume = \(volumeChange.volume ?? -1)")
+            }
+        }
             
         Task {
             await service.subscribeToEvents()
@@ -99,6 +160,7 @@ A full implementation of standard OpenHome services and state changes:
 - OpenHomeConfig
 - OpenHomeCredentials
 - OpenHomeInfo
+- OpenHomeOAuth
 - OpenHomePins
 - OpenHomePlaylist
 - OpenHomePlaylistManager
@@ -118,6 +180,5 @@ SwiftUPnP is released under the MIT license.
 
 ## Dependencies
 SwiftUPnP use the following packages:
-- Swifter provides a small http server to listen for state changes triggered by UPnP devices.
 - XMLCoder is used to encode and decode SOAP envelopes.
 - CocoaAsyncSocket to detect UPnP devices on the network using multicast.

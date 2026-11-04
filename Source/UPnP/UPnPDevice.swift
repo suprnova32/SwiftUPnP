@@ -28,12 +28,20 @@ import Foundation
 import XMLCoder
 import os.log
 
-internal struct UPnPDeviceDescription: Codable {
-    let uuid: String
-    let deviceId: String
-    let deviceType: String
-    let url: URL
-    let lastSeen: Date
+public struct UPnPDeviceDescription: Codable, Sendable {
+    public let uuid: String
+    public let deviceId: String
+    public let deviceType: String
+    public let url: URL
+    public let lastSeen: Date
+    
+    public init(uuid: String, deviceId: String, deviceType: String, url: URL, lastSeen: Date) {
+        self.uuid = uuid
+        self.deviceId = deviceId
+        self.deviceType = deviceType
+        self.url = url
+        self.lastSeen = lastSeen
+    }
 }
 
 public class UPnPDevice: Equatable, Identifiable, Hashable {
@@ -55,6 +63,7 @@ public class UPnPDevice: Equatable, Identifiable, Hashable {
     @MainActor
     public var services = [UPnPService]()
     @MainActor
+    /// Settable by an app that loads a device's services itself (see `UPnPRegistry.typedService(device:deviceService:)`).
     public var servicesLoaded: Bool {
         didSet {
             if servicesLoaded {
@@ -63,6 +72,8 @@ public class UPnPDevice: Equatable, Identifiable, Hashable {
         }
     }
     
+    /// Public so an app can describe a device it knows about without discovering it (a Sonos coordinator found
+    /// through the zone topology, for example) and load its services through a registry.
     public init(uuid: String, deviceId: String, deviceType: String, url: URL, lastSeen: Date) {
         self.uuid = uuid
         self.deviceId = deviceId
@@ -75,6 +86,33 @@ public class UPnPDevice: Equatable, Identifiable, Hashable {
     public static func reanimate(from data: Data) -> UPnPDevice? {
         guard let upnpDeviceDescription = try? JSONDecoder().decode(UPnPDeviceDescription.self, from: data) else { return nil }
         return UPnPDevice(upnpDeviceDescription: upnpDeviceDescription)
+    }
+    
+    @MainActor
+    /// Create a fully loaded UPnPDevice, but without adding it to a device registry. There is no subscription for state changes on the services on this device, unless a valid UPnPRegistry is passed in.
+    /// - Parameter data: a data representation of the description of the service
+    /// - Parameter registry: a registry with a http server that can be used to receive events
+    /// - Returns: a fully loaded device, or nil if it can't be found/loaded
+    public static func reanimateDeep(from data: Data, registry: UPnPRegistry? = nil) async -> UPnPDevice? {
+        guard let upnpDeviceDescription = try? JSONDecoder().decode(UPnPDeviceDescription.self, from: data) else { return nil }
+        return await reanimateDeep(upnpDeviceDescription: upnpDeviceDescription, registry: registry)
+    }
+
+    @MainActor
+    /// Create a fully loaded UPnPDevice, but without adding it to a device registry. There is no subscription for state changes on the services on this device, unless a valid UPnPRegistry is passed in.
+    /// - Parameter upnpDeviceDescription: a description of the service
+    /// - Parameter registry: a registry with a http server that can be used to receive events
+    /// - Returns: a fully loaded device, or nil if it can't be found/loaded
+    public static func reanimateDeep(upnpDeviceDescription: UPnPDeviceDescription, registry: UPnPRegistry? = nil) async -> UPnPDevice? {
+        let device = UPnPDevice(upnpDeviceDescription: upnpDeviceDescription)
+        
+        if await device.loadServices(registry: registry) {
+            device.servicesLoaded = true
+            
+            return device
+        }
+        
+        return nil
     }
     
     internal init(upnpDeviceDescription: UPnPDeviceDescription) {
@@ -109,6 +147,33 @@ public class UPnPDevice: Equatable, Identifiable, Hashable {
         }
     }
     
+    func loadServices(registry: UPnPRegistry?) async -> Bool {
+        guard await loadRoot() == true else {
+            Logger.swiftUPnP.error("Failed to load root on \(self.url)")
+            return false
+        }
+            
+        if let deviceServices = deviceDefinition?.device.allServices {
+            for deviceService in deviceServices {
+                // Create the service through the registry when there is one, so it is known there
+                // and keeps receiving a valid event callback url.
+                let service: UPnPService?
+                if let registry {
+                    service = await registry.typedService(device: self, deviceService: deviceService)
+                }
+                else {
+                    service = UPnPRegistry.typedService(device: self, deviceService: deviceService)
+                }
+                guard let service else { continue }
+
+                await service.loadScdp()
+                await add(service)
+            }
+        }
+        
+        return true
+    }
+    
     public func loadRoot() async -> Bool {
         var request = URLRequest(url: url, timeoutInterval: 3.0)
         request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
@@ -123,7 +188,7 @@ public class UPnPDevice: Equatable, Identifiable, Hashable {
             let decoder = XMLDecoder()
             decoder.shouldProcessNamespaces = false
             deviceDefinition = try decoder.decode(UPnPDeviceDefinition.self, from: data)
-//            Logger.swiftUPnP.debug("Device parsed \(self.deviceDefinition!.device.friendlyName) - \(self.deviceDefinition!.device.deviceType  )")
+            Logger.swiftUPnP.debug("Device parsed \(self.deviceDefinition!.device.friendlyName) - \(self.deviceDefinition!.device.deviceType  )")
             return true
         }
         catch DecodingError.dataCorrupted(let context) {
@@ -148,14 +213,15 @@ extension UPnPDevice {
         services.first(where: { $0.serviceType == "urn:schemas-upnp-org:service:ConnectionManager:1" }) as? ConnectionManager1Service
     }
     
+    /// The Sonos AVTransport, which extends the standard one with the queue, grouping and sleep-timer actions.
     public var avTransport1Service: AVTransport1? {
         services.first(where: { $0.serviceType == "urn:schemas-upnp-org:service:AVTransport:1" }) as? AVTransport1
     }
-    
+
     public var renderingControl1Service: RenderingControl1Service? {
         services.first(where: { $0.serviceType == "urn:schemas-upnp-org:service:RenderingControl:1" }) as? RenderingControl1Service
     }
-    
+
     public var contentDirectory1Service: ContentDirectory1Service? {
         services.first(where: { $0.serviceType == "urn:schemas-upnp-org:service:ContentDirectory:1" }) as? ContentDirectory1Service
     }
@@ -214,5 +280,9 @@ extension UPnPDevice {
     
     public var openHomeReceiver1Service: OpenHomeReceiver1Service? {
         services.first(where: { $0.serviceType == "urn:av-openhome-org:service:Receiver:1" }) as? OpenHomeReceiver1Service
+    }
+    
+    public var openHomeOAuth1Service: OpenHomeOAuth1Service? {
+        services.first(where: { $0.serviceType == "urn:av-openhome-org:service:OAuth:1" }) as? OpenHomeOAuth1Service
     }
 }

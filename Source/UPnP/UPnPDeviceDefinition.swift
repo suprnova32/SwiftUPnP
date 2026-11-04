@@ -43,6 +43,7 @@ public struct Device: Decodable {
     public let manufacturerURL: String?
     public let modelDescription: String?
     public let modelName: String
+    /// Sonos: the room a player is in.
     public let roomName: String?
     public let modelNumber: String?
     public let modelURL: String?
@@ -52,6 +53,7 @@ public struct Device: Decodable {
 
     public let iconList: IconList?
     public let serviceList: ServiceList?
+    /// Embedded devices. Sonos players keep their MediaRenderer and MediaServer services here.
     public let deviceList: DeviceList?
     
     public let presentationURL: String?
@@ -77,13 +79,22 @@ public struct DeviceList: Decodable {
     public let device: [Device]
 }
 
+public extension Device {
+    /// The services of this device and of every embedded device, depth first. A Sonos player lists
+    /// AVTransport, RenderingControl and ContentDirectory under its embedded MediaRenderer and
+    /// MediaServer devices, not at the top level.
+    var allServices: [Service] {
+        (serviceList?.service ?? []) + (deviceList?.device ?? []).flatMap(\.allServices)
+    }
+}
+
 public struct Service: Decodable {
     public let serviceType: String
     public let serviceId: String
     public let SCPDURL: String
     public let controlURL: String
     public let eventSubURL: String
-    
+
     public init(serviceType: String, serviceId: String, SCPDURL: String, controlURL: String, eventSubURL: String) {
         self.serviceType = serviceType
         self.serviceId = serviceId
