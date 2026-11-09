@@ -22,10 +22,14 @@ public class AVTransport1: UPnPService {
 	public enum PlaybackStorageMediumEnum: String, Codable {
 		case none = "NONE"
 		case network = "NETWORK"
+		case notImplemented = "NOT_IMPLEMENTED"
 	}
 
+	// Sonos answers GetMediaInfo with RecordMedium NOT_IMPLEMENTED; without the case the whole
+	// response failed to decode
 	public enum RecordStorageMediumEnum: String, Codable {
 		case none = "NONE"
+		case notImplemented = "NOT_IMPLEMENTED"
 	}
 
 	public enum CurrentPlayModeEnum: String, Codable {
