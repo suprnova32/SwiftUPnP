@@ -551,6 +551,15 @@ public class UPnPRegistry {
                                             serviceId: deviceService.serviceId,
                                             eventPublisher: eventPublisher,
                                             eventCallbackUrl: eventCallbackUrl)
+        case "urn:schemas-upnp-org:service:ZoneGroupTopology:1":
+            return ZoneGroupTopology1Service(device: device,
+                                             controlUrl: controlUrl,
+                                             scpdUrl: scpdUrl,
+                                             eventUrl: eventUrl,
+                                             serviceType: deviceService.serviceType,
+                                             serviceId: deviceService.serviceId,
+                                             eventPublisher: eventPublisher,
+                                             eventCallbackUrl: eventCallbackUrl)
         default:
             return UPnPService(device: device,
                                controlUrl: controlUrl,

@@ -222,6 +222,11 @@ extension UPnPDevice {
         services.first(where: { $0.serviceType == "urn:schemas-upnp-org:service:RenderingControl:1" }) as? RenderingControl1Service
     }
 
+    /// Sonos's group topology: its events carry the whole ZoneGroupState on every grouping change.
+    public var zoneGroupTopology1Service: ZoneGroupTopology1Service? {
+        services.first(where: { $0.serviceType == "urn:schemas-upnp-org:service:ZoneGroupTopology:1" }) as? ZoneGroupTopology1Service
+    }
+
     public var contentDirectory1Service: ContentDirectory1Service? {
         services.first(where: { $0.serviceType == "urn:schemas-upnp-org:service:ContentDirectory:1" }) as? ContentDirectory1Service
     }
