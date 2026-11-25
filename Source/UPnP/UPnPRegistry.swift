@@ -87,9 +87,12 @@ public class UPnPRegistry {
         // nothing else notices: the subscriptions stay valid and keep being renewed happily.
         httpServer.onFailure = { [weak self] _ in
             Task { @MainActor [weak self] in
+                guard let stops = self?.httpServerStops else { return }
                 // The network is usually still settling when the listener drops out.
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
-                await self?.startHTTPServer()
+                // Stopped on purpose meanwhile (discovery stopped, or the demo took over): that counts.
+                guard let self, self.httpServerStops == stops else { return }
+                await self.startHTTPServer()
             }
         }
 
@@ -105,9 +108,15 @@ public class UPnPRegistry {
         }
         guard !filteredTypes.isEmpty else { return }
 
+        // A stop that comes after this call wins, also when it comes while the listener below is
+        // still starting: otherwise discovery would begin after it (searching the network while a
+        // demo runs, for one).
+        let generation = discoveryGeneration
         // The discovery engine keeps its state on the main queue, like its socket callbacks.
         Task { @MainActor in
+            guard generation == discoveryGeneration else { return }
             await startHTTPServerIfNotRunning()
+            guard generation == discoveryGeneration else { return }
             do {
                 try discoveryEngine.startDiscovery(forTypes: filteredTypes)
             }
@@ -123,11 +132,46 @@ public class UPnPRegistry {
     }
     
     public func stopDiscovery() {
+        let generation = nextDiscoveryGeneration()
         Task { @MainActor in
-            discoveryEngine.stopDiscovery()
-            stopHTTPServer()
-            devices.removeAll(keepingCapacity: false)
+            // A later stop already did this, and devices may have been added after it.
+            guard generation == discoveryGeneration else { return }
+            tearDownDiscovery()
         }
+    }
+
+    /// ``stopDiscovery()`` for a caller that adds devices right after: it returns once the devices
+    /// are gone, where ``stopDiscovery()`` clears them later and could drop a device added meanwhile.
+    /// A ``startDiscovery(_:)`` or ``stopDiscovery()`` asked for before it doesn't act after it.
+    /// Like ``stopDiscovery()`` it stops the event listener; adding a device starts it again.
+    @MainActor
+    public func stopDiscoveryNow() {
+        nextDiscoveryGeneration()
+        tearDownDiscovery()
+    }
+
+    @MainActor
+    private func tearDownDiscovery() {
+        discoveryEngine.stopDiscovery()
+        stopHTTPServer()
+        devices.removeAll(keepingCapacity: false)
+    }
+
+    /// Bumped by every stop of discovery, so that a start or stop asked for before a later stop
+    /// doesn't act after it. Read and bumped from any thread, hence the lock.
+    private let discoveryGenerationLock = NSLock()
+    private var _discoveryGeneration = 0
+
+    private var discoveryGeneration: Int {
+        discoveryGenerationLock.lock(); defer { discoveryGenerationLock.unlock() }
+        return _discoveryGeneration
+    }
+
+    @discardableResult
+    private func nextDiscoveryGeneration() -> Int {
+        discoveryGenerationLock.lock(); defer { discoveryGenerationLock.unlock() }
+        _discoveryGeneration += 1
+        return _discoveryGeneration
     }
     
     @MainActor
@@ -179,12 +223,24 @@ public class UPnPRegistry {
     /// doesn't end up with two listeners fighting over the same port.
     @MainActor
     private var startTask: Task<Void, Never>?
+    /// Bumped by every ``stopHTTPServer()``, so that a start can tell whether it was asked for before
+    /// or after a stop that called off the start it joined.
+    @MainActor
+    private var httpServerStops = 0
 
     @MainActor
     internal func startHTTPServer() async {
-        if let startTask {
-            await startTask.value
-            return
+        let stopsWhenAsked = httpServerStops
+        while let pending = startTask {
+            await pending.value
+            // A start that a stop called off stopped its listener again. A caller that asked before
+            // that stop is answered by it; one that asked after it (a service of a device added right
+            // after the stop) still needs a listener, and starts one once the called-off start has
+            // wound down, so that two starts never run side by side.
+            guard pending.isCancelled, httpServerStops == stopsWhenAsked else { return }
+            if startTask == pending {
+                startTask = nil
+            }
         }
 
         let task = Task { @MainActor in
@@ -192,7 +248,10 @@ public class UPnPRegistry {
         }
         startTask = task
         await task.value
-        startTask = nil
+        // A caller that joined a called-off start may have started the next one already.
+        if startTask == task {
+            startTask = nil
+        }
     }
 
     /// Listen on a port from the range this registry was created with, and hand every known service
@@ -208,7 +267,9 @@ public class UPnPRegistry {
             guard port != 0 else { continue }
 
             do {
-                try await httpServer.start(port: port)
+                // Events that come back over loopback only need a loopback listener, and that one
+                // also works without any network (a listener on every interface waits for one).
+                try await httpServer.start(port: port, loopbackOnly: Self.isLoopback(callbackHostOverride))
 
                 // Binding is not instant, and discovery may have been stopped while it was underway.
                 guard Task.isCancelled == false else {
@@ -256,18 +317,36 @@ public class UPnPRegistry {
     
     @MainActor
     private func stopHTTPServer() {
+        httpServerStops += 1
         startTask?.cancel()
+        // Cleared also while a start is still underway (the listener isn't running yet): that start
+        // is called off and won't publish, and services created meanwhile must not get the old url.
+        eventCallbackUrl = nil
         guard httpServer.isRunning else { return }
 
         httpServer.stop()
-        eventCallbackUrl = nil
     }
-    
+
+    /// The host devices are told to post their events to, in place of this device's Wi-Fi address.
+    /// Set it to "127.0.0.1" when the devices run in this process (a demo or a test), so that events
+    /// arrive without a network and without touching the local network: with a loopback host the
+    /// listener is bound to the loopback interface only. Call ``recoverEventDelivery()`` after
+    /// changing it while the listener is running; services keep the url they were handed until then.
+    public var callbackHostOverride: String?
+
     func callbackUrl() -> URL? {
-        if let ipAddress = IPHelper.getInterfaceIPAddress(interfaceNames: ["en0", "en1"]) {
-            return  URL(string: "http://\(ipAddress):\(httpServerPort)\(eventCallBackPath)")
+        guard let host = callbackHostOverride ?? IPHelper.getInterfaceIPAddress(interfaceNames: ["en0", "en1"]) else {
+            return nil
         }
-        return nil
+        // An IPv6 address is only a host in a url between brackets.
+        let urlHost = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
+        return URL(string: "http://\(urlHost):\(httpServerPort)\(eventCallBackPath)")
+    }
+
+    /// Whether a callback host can only be reached from this device.
+    static func isLoopback(_ host: String?) -> Bool {
+        guard let host = host?.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]")) else { return false }
+        return host == "localhost" || host == "::1" || host.hasPrefix("127.")
     }
     
     @MainActor

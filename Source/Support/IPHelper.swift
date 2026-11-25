@@ -66,7 +66,14 @@ struct IPHelper {
             }
         } ()
         
-        if ioctl(socket(AF_INET, SOCK_DGRAM, 0), UInt(ioRequest), &ifr) < 0 {
+        // Closed again: this runs on every check of the callback url, and a socket per check adds up.
+        let socketFileDescriptor = socket(AF_INET, SOCK_DGRAM, 0)
+        guard socketFileDescriptor >= 0 else {
+            throw POSIXError (POSIXErrorCode (rawValue: errno) ?? POSIXErrorCode.EINVAL)
+        }
+        defer { Darwin.close(socketFileDescriptor) }
+
+        if ioctl(socketFileDescriptor, UInt(ioRequest), &ifr) < 0 {
             throw POSIXError (POSIXErrorCode (rawValue: errno) ?? POSIXErrorCode.EINVAL)
         }
         
@@ -110,6 +117,7 @@ struct IPHelper {
         memcpy(&bind_addr, &addr, Int(sizeOfSockkAddr))
 
         if Darwin.bind(socketFileDescriptor, &bind_addr, socklen_t(sizeOfSockkAddr)) == -1 {
+            Darwin.close(socketFileDescriptor)
             return false
         }
         let isAvailable = listen(socketFileDescriptor, SOMAXCONN ) != -1

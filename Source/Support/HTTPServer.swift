@@ -27,42 +27,59 @@ import Network
 import os.log
 
 /// A request as it arrived from a device.
-struct HTTPServerRequest {
+public struct HTTPServerRequest {
     /// Upper-cased, so that a device that writes `notify` is treated like one that writes `NOTIFY`.
     /// UPnP uses methods that are not part of the standard http set (NOTIFY, SUBSCRIBE,
     /// UNSUBSCRIBE), which is why nothing here rejects a method it doesn't recognize.
-    let method: String
+    public let method: String
     /// The path of the request target, without the query.
-    let path: String
+    public let path: String
     /// Keyed by upper-cased field name, values of repeated fields are joined with a comma.
-    let headers: [String: String]
-    let body: Data
+    public let headers: [String: String]
+    public let body: Data
 
-    func header(_ name: String) -> String? {
+    /// The method and the header names are upper-cased here, so that a request made by hand is matched
+    /// by ``header(_:)`` and by method the same way as one that arrived over a connection.
+    public init(method: String, path: String, headers: [String: String], body: Data) {
+        self.method = method.uppercased()
+        self.path = path
+        self.headers = Dictionary(headers.map { ($0.key.uppercased(), $0.value) },
+                                  uniquingKeysWith: { "\($0), \($1)" })
+        self.body = body
+    }
+
+    public func header(_ name: String) -> String? {
         headers[name.uppercased()]
     }
 }
 
-struct HTTPServerResponse {
-    var statusCode: Int
-    var reasonPhrase: String
+public struct HTTPServerResponse {
+    public var statusCode: Int
+    public var reasonPhrase: String
     /// `Content-Length` and `Connection` are written by the server itself and are ignored here.
-    var headers = [String: String]()
-    var body = Data()
+    public var headers = [String: String]()
+    public var body = Data()
 
-    static func ok(headers: [String: String] = [:], body: Data = Data()) -> HTTPServerResponse {
+    public init(statusCode: Int, reasonPhrase: String, headers: [String: String] = [:], body: Data = Data()) {
+        self.statusCode = statusCode
+        self.reasonPhrase = reasonPhrase
+        self.headers = headers
+        self.body = body
+    }
+
+    public static func ok(headers: [String: String] = [:], body: Data = Data()) -> HTTPServerResponse {
         HTTPServerResponse(statusCode: 200, reasonPhrase: "OK", headers: headers, body: body)
     }
 
-    static func status(_ statusCode: Int, _ reasonPhrase: String, headers: [String: String] = [:]) -> HTTPServerResponse {
+    public static func status(_ statusCode: Int, _ reasonPhrase: String, headers: [String: String] = [:]) -> HTTPServerResponse {
         HTTPServerResponse(statusCode: statusCode, reasonPhrase: reasonPhrase, headers: headers)
     }
 
-    static func notFound() -> HTTPServerResponse {
+    public static func notFound() -> HTTPServerResponse {
         .status(404, "Not Found")
     }
 
-    static func internalServerError(_ message: String) -> HTTPServerResponse {
+    public static func internalServerError(_ message: String) -> HTTPServerResponse {
         HTTPServerResponse(statusCode: 500, reasonPhrase: "Internal Server Error", body: Data(message.utf8))
     }
 }
@@ -74,14 +91,14 @@ struct HTTPServerResponse {
 ///
 /// Failure of a running listener is reported through ``onFailure``: without it a listener that stops
 /// accepting connections is invisible from the outside, and the events simply stop arriving.
-final class HTTPServer {
-    typealias Handler = (HTTPServerRequest) -> HTTPServerResponse
+public final class HTTPServer {
+    public typealias Handler = (HTTPServerRequest) -> HTTPServerResponse
 
-    enum ServerError: LocalizedError {
+    public enum ServerError: LocalizedError {
         case invalidPort(UInt16)
         case failedToListen(port: UInt16, underlying: Error)
 
-        var errorDescription: String? {
+        public var errorDescription: String? {
             switch self {
             case let .invalidPort(port):
                 return "\(port) is not a valid port number"
@@ -93,14 +110,18 @@ final class HTTPServer {
 
     /// Called when a listener that was running stopped on its own, which happens when the network it
     /// was bound to disappears. Not called for a listener that is stopped through ``stop()``, and
-    /// not called for a listener that never started: that is reported by ``start(port:)`` throwing.
+    /// not called for a listener that never started: that is reported by ``start(port:loopbackOnly:)``
+    /// throwing.
     ///
     /// Called on an internal queue.
-    var onFailure: ((Error) -> Void)?
+    public var onFailure: ((Error) -> Void)? {
+        get { lock.lock(); defer { lock.unlock() }; return _onFailure }
+        set { lock.lock(); _onFailure = newValue; lock.unlock() }
+    }
 
     /// Answers the requests that arrive, on a queue of the connection they arrived over. Set it
     /// before starting; a request that arrives without one is answered with an error.
-    var handler: Handler? {
+    public var handler: Handler? {
         get { lock.lock(); defer { lock.unlock() }; return _handler }
         set { lock.lock(); _handler = newValue; lock.unlock() }
     }
@@ -112,6 +133,10 @@ final class HTTPServer {
     /// which matters because a restart binds the port it was already using.
     private let cancellations = DispatchGroup()
     private var _handler: Handler?
+    private var _onFailure: ((Error) -> Void)?
+    /// Bumped by every start and stop, so that a start that was overtaken by another start or by a
+    /// stop while it waited never starts its listener.
+    private var generation = 0
     private var listener: NWListener?
     private var connections = [ObjectIdentifier: HTTPConnection]()
     private var startContinuation: CheckedContinuation<Void, Error>?
@@ -120,7 +145,7 @@ final class HTTPServer {
 
     /// - Parameter requestTimeout: how long a request that has started arriving may take to arrive
     ///   in full before its connection is given up on.
-    init(requestTimeout: TimeInterval = 30) {
+    public init(requestTimeout: TimeInterval = 30) {
         self.requestTimeout = requestTimeout
     }
 
@@ -130,21 +155,31 @@ final class HTTPServer {
 
     /// Whether the listener is accepting connections. False both before it is started and after it
     /// failed, which is what makes it worth checking.
-    var isRunning: Bool {
+    public var isRunning: Bool {
         lock.lock(); defer { lock.unlock() }
         return _isRunning
     }
 
-    /// The port that is being listened on, which is the port that was asked for. 0 when not running.
-    var port: UInt16 {
+    /// The port that is being listened on: the port that was asked for, or the one the system picked
+    /// when 0 was asked for. 0 when not running, and also while a listener that was asked to pick its
+    /// own port waits for a network (only a listener that isn't ``start(port:loopbackOnly:)``
+    /// loopback-only can wait for one).
+    public var port: UInt16 {
         lock.lock(); defer { lock.unlock() }
         return _port
     }
 
     /// Start listening, and return once the listener is either accepting connections or has failed
     /// to bind. Any listener that was running is stopped first.
-    func start(port: UInt16) async throws {
-        stop()
+    ///
+    /// Throws `CancellationError` when ``stop()`` or another start is called before the listener
+    /// is up: the later call counts, and the listener of this one is never started.
+    /// - Parameters:
+    ///   - port: the port to listen on; 0 lets the system pick a free one (read it from ``port``).
+    ///   - loopbackOnly: accept connections over the loopback interface only (127.0.0.1), for a
+    ///     server that only this device's own processes may reach.
+    public func start(port: UInt16, loopbackOnly: Bool = false) async throws {
+        let generation = halt()
         // Stopping is not immediate, and until it completes the port is still taken. Waiting is what
         // makes restarting on the same port work, which is how event delivery is recovered.
         await waitForCancellations()
@@ -158,6 +193,9 @@ final class HTTPServer {
         // previous socket lingers.
         parameters.allowLocalEndpointReuse = true
         parameters.includePeerToPeer = false
+        if loopbackOnly {
+            parameters.requiredInterfaceType = .loopback
+        }
         if let tcp = parameters.defaultProtocolStack.internetProtocol as? NWProtocolTCP.Options {
             // A device that disappears without closing its connection leaves it open forever
             // otherwise, and events are far enough apart that nothing else would notice.
@@ -180,10 +218,17 @@ final class HTTPServer {
             self?.handleStateChange(state, of: listener, port: port)
         }
 
-        store(listener)
-
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            // The listener and the continuation are stored together, and only when nothing came in
+            // while this start waited: a start that overlaps another would otherwise overwrite its
+            // continuation (leaving that caller waiting forever) and leave a listener nobody stops.
             lock.lock()
+            guard self.generation == generation else {
+                lock.unlock()
+                continuation.resume(throwing: CancellationError())
+                return
+            }
+            self.listener = listener
             startContinuation = continuation
             lock.unlock()
 
@@ -191,15 +236,16 @@ final class HTTPServer {
         }
     }
 
-    /// Separate from ``start(port:)`` because the lock may not be taken from an async context.
-    private func store(_ listener: NWListener) {
-        lock.lock()
-        self.listener = listener
-        lock.unlock()
+    public func stop() {
+        halt()
     }
 
-    func stop() {
+    /// ``stop()``, returning the generation that a start following it owns.
+    @discardableResult
+    private func halt() -> Int {
         lock.lock()
+        generation += 1
+        let generation = self.generation
         let listener = self.listener
         let connections = self.connections
         let continuation = startContinuation
@@ -218,6 +264,7 @@ final class HTTPServer {
         }
 
         continuation?.resume(throwing: CancellationError())
+        return generation
     }
 
     /// Stop a listener and keep track of it until it reports that it did, so that the port it holds
@@ -311,6 +358,8 @@ final class HTTPServer {
         }
         let continuation = startContinuation
         let wasRunning = _isRunning
+        // The port that was listened on, which is not the one asked for when that was 0.
+        let failedPort = _port != 0 ? _port : port
         startContinuation = nil
         self.listener = nil
         _isRunning = false
@@ -324,12 +373,12 @@ final class HTTPServer {
             connection.close()
         }
 
-        let serverError = ServerError.failedToListen(port: port, underlying: error)
+        let serverError = ServerError.failedToListen(port: failedPort, underlying: error)
         if let continuation {
             continuation.resume(throwing: serverError)
         }
         else if wasRunning {
-            Logger.swiftUPnP.error("Stopped listening on port \(port): \(error.localizedDescription)")
+            Logger.swiftUPnP.error("Stopped listening on port \(failedPort): \(error.localizedDescription)")
             onFailure?(serverError)
         }
     }

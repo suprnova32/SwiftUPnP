@@ -537,3 +537,97 @@ final class HTTPServerTests: XCTestCase {
         }
     }
 }
+
+// MARK: - Serving from inside the app (a demo household on 127.0.0.1)
+
+extension HTTPServerTests {
+    /// Asking for port 0 lets the system pick a free one, which is then the port to connect to.
+    func testPortZeroListensOnAPortTheSystemPicks() async throws {
+        server.handler = { _ in .ok(body: Data("hello".utf8)) }
+        try await server.start(port: 0, loopbackOnly: true)
+
+        XCTAssertTrue(server.isRunning)
+        XCTAssertNotEqual(server.port, 0)
+        port = server.port
+        let response = try await send(method: "GET", path: "/xml/device_description.xml")
+        XCTAssertEqual(response.statusCode, 200)
+    }
+
+    /// A loopback-only server is still reachable from this device's own processes.
+    func testALoopbackOnlyServerAnswersOn127001() async throws {
+        server.handler = { request in .ok(headers: ["X-Path": request.path]) }
+        try await server.start(port: port, loopbackOnly: true)
+
+        let response = try await send(method: "POST", path: "/MediaRenderer/AVTransport/Control")
+        XCTAssertEqual(response.value(forHTTPHeaderField: "X-Path"), "/MediaRenderer/AVTransport/Control")
+    }
+
+    /// Two starts that overlap (a listener's own recovery and a recovery after the background, for
+    /// one) both return, and leave one listener that answers.
+    func testOverlappingStartsBothReturnAndLeaveOneListener() async throws {
+        server.handler = { _ in .ok() }
+        let server = try XCTUnwrap(self.server)
+        let port = self.port
+
+        let first = Task { try await server.start(port: port, loopbackOnly: true) }
+        let second = Task { try await server.start(port: port, loopbackOnly: true) }
+        let outcomes = [await first.result, await second.result]
+
+        XCTAssertTrue(outcomes.contains { if case .success = $0 { return true } else { return false } })
+        XCTAssertTrue(server.isRunning)
+        let response = try await send(method: "GET", path: "/")
+        XCTAssertEqual(response.statusCode, 200)
+    }
+
+    /// A request made by hand (a handler under test) is matched the same way as a parsed one.
+    func testARequestMadeByHandIsUpperCasedLikeAParsedOne() {
+        let request = HTTPServerRequest(method: "notify", path: "/Event/abc", headers: ["Sid": "uuid:subscription-1"], body: Data())
+
+        XCTAssertEqual(request.method, "NOTIFY")
+        XCTAssertEqual(request.header("SID"), "uuid:subscription-1")
+        XCTAssertEqual(request.header("sid"), "uuid:subscription-1")
+    }
+}
+
+final class UPnPRegistryCallbackTests: XCTestCase {
+    /// Devices that run in this process are told to post their events to 127.0.0.1, which works
+    /// without Wi-Fi and never reaches the local network.
+    func testTheCallbackHostOverrideReplacesTheNetworkAddress() {
+        let registry = UPnPRegistry(httpServerPortRange: 54000..<54099)
+        registry.callbackHostOverride = "127.0.0.1"
+
+        let url = registry.callbackUrl()
+        XCTAssertEqual(url?.host, "127.0.0.1")
+        XCTAssertEqual(url?.scheme, "http")
+        XCTAssertNotNil(url?.port)
+    }
+
+    func testWithoutAnOverrideTheCallbackHostIsNotLoopback() throws {
+        let registry = UPnPRegistry(httpServerPortRange: 54100..<54199)
+        // Without an address there is no url at all, which says nothing about the host.
+        guard let url = registry.callbackUrl() else {
+            throw XCTSkip("This machine has no en0/en1 address to be called back on")
+        }
+        XCTAssertNotEqual(url.host, "127.0.0.1")
+    }
+
+    /// An IPv6 host is put between brackets, without which there is no url.
+    func testAnIPv6CallbackHostOverrideMakesAUrl() {
+        let registry = UPnPRegistry(httpServerPortRange: 54200..<54299)
+        registry.callbackHostOverride = "::1"
+
+        let url = registry.callbackUrl()
+        XCTAssertNotNil(url)
+        XCTAssertTrue(url?.absoluteString.hasPrefix("http://[::1]:") == true)
+    }
+
+    /// A loopback callback host is what puts the listener on the loopback interface only.
+    func testLoopbackCallbackHosts() {
+        XCTAssertTrue(UPnPRegistry.isLoopback("127.0.0.1"))
+        XCTAssertTrue(UPnPRegistry.isLoopback("localhost"))
+        XCTAssertTrue(UPnPRegistry.isLoopback("::1"))
+        XCTAssertTrue(UPnPRegistry.isLoopback("[::1]"))
+        XCTAssertFalse(UPnPRegistry.isLoopback(nil))
+        XCTAssertFalse(UPnPRegistry.isLoopback("192.168.1.10"))
+    }
+}
